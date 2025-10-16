@@ -1,8 +1,7 @@
-import userModel from '../models/user.model.js';
-import * as userService from '../services/user.service.js';
 import { validationResult } from 'express-validator';
+import userModel from '../models/user.model.js';
 
-export const register = async (req, res, next) => {
+export const register = async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
@@ -11,53 +10,64 @@ export const register = async (req, res, next) => {
     try {
         const { name, email, password } = req.body;
 
-        // Check if user already exists
         const existingUser = await userModel.findOne({ email });
         if (existingUser) {
-            return res.status(400).json({ message: 'User already exists' });
+            return res.status(400).json({ message: 'User with this email already exists' });
         }
 
-        // Delegate creation to service
-        return await userService.createUser(req, res);
+        const newUser = new userModel({ name, email, password });
+        await newUser.save();
+
+        res.status(201).json({ message: 'User registered successfully' });
     } catch (error) {
-        console.error('Registration error:', error);
-        res.status(500).json({ message: 'Server error' });
+        res.status(500).json({ message: 'Server error during registration' });
     }
 };
 
-export const login = async (req, res, next) => {
+export const login = async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
     }
 
     try {
-        return await userService.authenticateUser(req, res);
-    } catch (error) {
-        console.error('Login error:', error);
-        res.status(500).json({ message: 'Server error' });
-    }
-};
+        const { email, password } = req.body;
 
-export const getUserProfile = async (req, res, next) => {
-    try {
-        const user = await userModel.findById(req.user._id).select('-password');
+        const user = await userModel.findOne({ email });
         if (!user) {
-            return res.status(404).json({ message: 'User not found' });
+            return res.status(401).json({ message: 'Invalid credentials' });
         }
-        res.status(200).json({ user });
+
+        const isMatch = await user.comparePassword(password);
+        if (!isMatch) {
+            return res.status(401).json({ message: 'Invalid credentials' });
+        }
+        
+        const token = user.generateAuthToken();
+
+        res.cookie('token', token, { 
+            httpOnly: true, 
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict' 
+        });
+
+        const userProfile = {
+            _id: user._id,
+            name: user.name,
+            email: user.email,
+        };
+
+        res.status(200).json({ message: 'Login successful', user: userProfile });
     } catch (error) {
-        console.error('Get profile error:', error);
-        res.status(500).json({ message: 'Server error' });
+        res.status(500).json({ message: 'Server error during login' });
     }
 };
 
-export const logout = async (req, res, next) => {
-    try {
-        res.clearCookie('token');
-        res.status(200).json({ message: 'Logged out successfully' });
-    } catch (error) {
-        console.error('Logout error:', error);
-        res.status(500).json({ message: 'Server error' });
-    }
+export const getUserProfile = async (req, res) => {
+    res.status(200).json(req.user);
+};
+
+export const logout = (req, res) => {
+    res.clearCookie('token');
+    res.status(200).json({ message: 'Logout successful' });
 };
